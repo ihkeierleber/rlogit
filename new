@@ -1,0 +1,95 @@
+#Logicsitc model
+
+heart<-read.csv("heart.csv")
+##### Reading in data and creating training/test set
+heart<-heart[,-1]
+index<- sample(nrow(heart),nrow(heart)*0.75)
+train<-heart[index,]
+test<-heart[-index,]
+
+install.packages("glmnet")
+library(glmnet)
+
+###### Variable selection using a logistic model 
+y.ind <- which(names(train)=="target")
+trainX <- scale(train[, -y.ind])
+trainY <- train[, y.ind]
+testX <- scale(test[, -y.ind])
+testY <- test[, y.ind]
+##### Lasso fit and cross validation
+lasso.fit <- glmnet(x=as.matrix(trainX), y=trainY, family = "binomial")
+lasso.fit.cv <- cv.glmnet(x=as.matrix(trainX), y=trainY, 
+                          family = "binomial", type.measure = "auc")
+plot(lasso.fit.cv)
+coef.min <- coef(lasso.fit, lasso.fit.cv$lambda.min)
+coef(lasso.fit, lasso.fit.cv$lambda.1se)
+coef(lasso.fit, lasso.fit.cv$lambda.min)
+
+lasso.fit.cv$cvm[lasso.fit.cv$lambda==lasso.fit.cv$lambda.min]
+lasso.fit.cv$cvm[lasso.fit.cv$lambda==lasso.fit.cv$lambda.1se]
+##### Creating model using variables from lasso variable selection 
+attach(heart)
+fit1<-glm(formula = target ~cp+thalach+exang+oldpeak+ca+thal, family = "binomial", data = train)
+summary(fit1)
+
+library(ROCR)
+##### Confusion matrix for Lasso Model (Model 1)
+pred.prob <- predict(fit1, newdata = train, type = "response")
+pred <- prediction(pred.prob, train$target)
+perf <- performance(pred, "tpr", "fpr")
+plot(perf, colorize=TRUE)
+##### In Sample AUC
+slot(performance(pred, "auc"), "y.values")[[1]]
+##### Out of Sample AUC
+pred.prob.test <- predict(fit1, newdata = test, type = "response")
+pred <- prediction(pred.prob.test, test$target)
+perf <- performance(pred, "tpr", "fpr")
+plot(perf, colorize=TRUE)
+slot(performance(pred, "auc"), "y.values")[[1]]
+
+pcut<- mean(train$target)
+pred.class <- (pred.prob>pcut)*1
+table(train$target, pred.class, dnn = c("True", "Pred"))
+
+##### testing sample
+pred.class.test <- (pred.prob.test>pcut)*1
+table(test$target, pred.class.test, dnn = c("True", "Pred"))
+
+# (equal-weighted) misclassification rate
+MR<- mean(test$target!=pred.class.test)
+# False positive rate
+FPR<- sum(test$target==0 & pred.class.test==1)/sum(test$target==0)
+# False negative rate
+FNR<-sum(test$target==1 & pred.class.test==0)/sum(test$target==1)
+FNR
+FPR
+MR
+###### cv model 1 (Lasso Model )
+library(caret)
+fit.control <- trainControl(method = "cv", 
+                            number = 10, 
+                            summaryFunction = twoClassSummary, 
+                            classProbs = TRUE)
+heart$target<-ifelse(heart$target=="1","Yes","No")
+
+cv.heart.model1 <- train(
+  form = target ~cp+thalach+exang+oldpeak+ca+thal, 
+  data = heart,
+  trControl = fit.control,
+  method = "glm",
+  family = "binomial"
+)
+cv.heart.model1
+
+##### in-sample prediction
+pred.lasso.train<- predict(lasso.fit, newx=trainX, s=lasso.fit.cv$lambda.1se, type = "response")
+###### out-of-sample prediction
+pred.lasso.test<- predict(lasso.fit, newx=testX, s=lasso.fit.cv$lambda.1se, type = "response")
+
+sum1<- summary(fit1)
+sum1
+sum1$deviance/sum1$df.residual
+##### Deviance of models
+fit1$deviance
+AIC(fit1)
+BIC(fit1)
